@@ -1,5 +1,6 @@
 #include <Servo.h>                  // Biblioteca do Servo Motor
 #include <Ethernet.h>               // Biblioteca do Ethernet
+#include <PubSubClient.h>           // Biblioteca MQTT
 #include <UniversalTelegramBot.h>   // Biblioteca do Telegram
 
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };    // Endereço MAC
@@ -9,6 +10,12 @@ IPAddress ip(192, 168, 1, 100);                         // Endereço IP do Ardui
 #define BOTtoken "SEU_TOKEN_DO_BOT"
 #define CHAT_ID "SEU_CHAT_ID"
 UniversalTelegramBot bot(BOTtoken);
+
+// Configuração do MQTT
+const char* mqtt_server = "bsi.cefet-rj.br";
+const int mqtt_port = 1883;
+EthernetClient ethClient;
+PubSubClient client(ethClient);
 
 Servo servo;     
 int pinoTrigPresenca = 5;                           // Pino do sensor sonar para medir presença
@@ -20,6 +27,29 @@ long duracao, distPresenca, distCapacidade, media;
 const int LIMITE_VAZIO = 20;                        // Limite inferior para lixeira vazia
 const int LIMITE_BAIXO = 40;                        // Limite inferior para baixa capacidade
 const int LIMITE_MEDIO = 60;                        // Limite inferior para média capacidade
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  // Handle message arrived
+}
+
+void reconnect() {
+  // Loop até estar conectado
+    while (!client.connected()) {
+        Serial.print("Tentando se conectar ao MQTT...");
+        // Tentativa de conexão
+        if (client.connect("ArduinoClient")) {
+            Serial.println("Conectado ao MQTT");
+            // Assina o tópico de controle
+            client.subscribe("topico/controle");
+        } else {
+            Serial.print("Falha na conexão, rc=");
+            Serial.print(client.state());
+            Serial.println("Tentando novamente em 5 segundos");
+            // Aguarda 5 segundos antes de tentar novamente
+            delay(5000);
+        }
+    }
+}
 
 void setup() {       
     Serial.begin(9600);
@@ -35,6 +65,10 @@ void setup() {
     // Inicialização do Ethernet
     Ethernet.begin(mac, ip);
     Serial.println("Ethernet conectado");
+
+    // Inicialização do MQTT
+    client.setServer(mqtt_server, mqtt_port);
+    client.setCallback(callback);
 }
 
 void medir(int pinoTrig, int pinoEcho, long &dist) {  
@@ -50,6 +84,11 @@ void medir(int pinoTrig, int pinoEcho, long &dist) {
 }
 
 void loop() { 
+    if (!client.connected()) {
+        reconnect();
+    }
+    client.loop();
+
     // Verifica a presença antes de abrir a tampa
     medir(pinoTrigPresenca, pinoEchoPresenca, distPresenca);
     if (distPresenca < 50) {
@@ -102,6 +141,10 @@ void loop() {
         Serial.println("Enviando mensagem no telegram...");
         bot.sendMessage(CHAT_ID, "Atenção! A lixeira está quase cheia. Por favor, esvazie-a.");
     }
+
+    // Publica a capacidade da lixeira no tópico MQTT
+    String msg = String(nivelCapacidade);
+    client.publish("topico/lixeira", msg.c_str());
 
     delay(1000);
 }
